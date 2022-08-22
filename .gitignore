@@ -3,4 +3,4 @@ logs
 .vscode
 .ipynb_checkpoints
 .empty
-data/*
+#data/*
