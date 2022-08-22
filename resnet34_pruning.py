@@ -42,15 +42,15 @@ parse_from_dict({
     "data": {
         "type": "caltech256", 
         "shuffle": True,
-        "batch_size": 125,
-        "test_batch_size": 125,
+        "batch_size": 64,
+        "test_batch_size": 64,
         "num_workers": 4
     },
     "loss": {
         "criterion": "softmax"
     },
     "gbn": {
-        "ratio_i": 0.3,
+        "ratio_i": 1,
         "lr_min": 1e-4,
         "lr_max": 1e-2,
         "tock_epoch": 40,
@@ -134,7 +134,8 @@ def set_optim(pack):
                 {'params': pack.net.module.layer2.parameters()},
                 {'params': pack.net.module.layer3.parameters()},
                 {'params': pack.net.module.layer4.parameters()},
-                {'params': pack.net.module.fc_c.parameters(), 'lr': 0.005}
+                {'params': pack.net.module.fc.parameters(), 'lr': 0.0005},
+                {'params': pack.net.module.fc_c.parameters(), 'lr': 0.01}
             ],
                 lr=0.0005,
                 momentum=cfg.train.momentum,
@@ -245,14 +246,12 @@ pack.trainer.test(pack)
 
 pack.tick_trainset = pack.train_loader
 prune_agent = IterRecoverFramework(pack, GBNs, cfg, ratio_i = cfg.gbn.ratio_i)
-prune_agent.set_score_i()
+# prune_agent.set_score_i()
 flops_save_points = set([90, 80, 70, 60, 50, 40])
 iter_idx = 0
 flops_ms = 90
-prune_agent.tock(tock_epoch=20)
-#prune_agent.freeze_model()
-# prune_agent.finetune_i(10)
-#prune_agent.recover_model()
+prune_agent.finetune_ir(tock_epoch=30)
+# prune_agent.tock(tock_epoch=20)
 
 while True:
     left_filter = prune_agent.total_filters - prune_agent.pruned_filters
@@ -271,6 +270,8 @@ while True:
     iter_idx += 1
     #if iter_idx % cfg.gbn.T == 0:
     if flops_ratio <= flops_ms:
+        # if flops_ms == 90:
+        #     prune_agent.print_mask()
         flops_ms = flops_ms-10
         #prune_agent.alpha_to_beta()
         print('Tocking:')

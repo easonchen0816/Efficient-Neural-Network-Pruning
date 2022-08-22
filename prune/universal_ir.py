@@ -410,23 +410,22 @@ class IterRecoverFramework():
             info.update(self.pack.trainer.test(self.pack))
             print('Caltech\t Test Loss: %.4f\t Test Acc: %.2f\t' % (info['test_loss'], info['acc@1']))
         
-        # self.save_g()
-
-        # self.pack.net.module.mod = 'Imagenet'
-        # self.set_imagenet_optim()
-        # train_tmp = self.pack.train_loader
-        # test_tmp = self.pack.test_loader
-        # self.pack.train_loader = self.pack.train_loader_i
-        # self.pack.test_loader = self.pack.test_loader_i
+        self.save_g()
+        self.pack.net.module.mod = 'Imagenet'
+        self.set_imagenet_optim()
+        train_tmp = self.pack.train_loader
+        test_tmp = self.pack.test_loader
+        self.pack.train_loader = self.pack.train_loader_i
+        self.pack.test_loader = self.pack.test_loader_i
         
-        # info = self.pack.trainer.train(self.pack)
-        # if test:
-        #     info.update(self.pack.trainer.test(self.pack))
-        #     print('Imagenet\t Test Loss: %.4f\t Test Acc: %.2f\t' % (info['test_loss'], info['acc@1']))
-        # self.pack.train_loader = train_tmp
-        # self.pack.test_loader = test_tmp
-        # self.pack.net.module.mod = 'Caltech'
-        # self.recover_g()
+        info = self.pack.trainer.train(self.pack)
+        if test:
+            info.update(self.pack.trainer.test(self.pack))
+            print('Imagenet\t Test Loss: %.4f\t Test Acc: %.2f\t' % (info['test_loss'], info['acc@1']))
+        self.pack.train_loader = train_tmp
+        self.pack.test_loader = test_tmp
+        self.recover_g()
+        self.pack.net.module.mod = 'Caltech'
         for gbn in self.masks:
             if isinstance(gbn, GatedBatchNorm2d):
                 gbn.stop_collecting_scores()
@@ -469,7 +468,12 @@ class IterRecoverFramework():
                 if g.group_id in self.status:
                     mask = torch.from_numpy(self.status[g.group_id]['mask'].astype('float32')).to(g.device).view(1, -1, 1, 1)
                     g.bn_mask.set_(mask * g.bn_mask)
-
+    def print_mask(self):
+        with torch.no_grad():
+            for g in self.masks:
+                _str = 'Group id: {}\t bn_mask: {}'.format(g.group_id, g.bn_mask)
+                print(_str)
+                self.pack.logger.save_log(_str)
     def freeze_conv(self):
         self._status = {}
         for m in self.pack.net.modules():
@@ -529,7 +533,43 @@ class IterRecoverFramework():
         print(_str)
         self.pack.logger.save_log(_str)
         return logs
-    
+    def finetune_ir(self, tock_epoch = 20, mute=False, acc_step=1):        
+        epoch = 0
+        best_acc = 0
+        best_info = {}
+        for i in range(tock_epoch):
+            info = self.pack.trainer.train_ir(self.pack, iter_hook = None, acc_step=acc_step) #iter_hook
+            self.pack.lr_scheduler.step(i)
+            #print(self.pack.lr_scheduler.get_lr())
+            print('LR - \t cov layer: %.5f\t fc layer: %.5f\t' % ( self.pack.lr_scheduler.get_lr()[0], self.pack.lr_scheduler.get_lr()[-1]))
+            
+            self.pack.net.module.mod = 'Imagenet'
+            test_tmp = self.pack.test_loader
+            self.pack.test_loader = self.pack.test_loader_i
+            info_i = self.pack.trainer.test(self.pack)
+            _str ='Imagenet - %d\t Test Loss: %.4f\t Test Acc: %.2f\t' % (i, info_i['test_loss'], info_i['acc@1'])
+            print(_str)
+            self.pack.logger.save_log(_str)
+            self.pack.test_loader = test_tmp
+            self.pack.net.module.mod = 'Caltech'
+
+            info.update(self.pack.trainer.test(self.pack))
+            info.update({'LR': self.pack.optimizer.param_groups[0]['lr']})
+            epoch += 1
+            if not mute:
+                _str = 'Caltech - %d\t Test Loss: %.4f\t Test Acc: %.2f' % (i, info['test_loss'], info['acc@1'])
+                print(_str)
+                self.pack.logger.save_log(_str)
+            if best_acc < info['acc@1']:
+                print('Get the best model!!!')
+                best_acc = info['acc@1']
+                best_info.update(info)
+                self.pack.best = self.pack.net
+        self.pack.net = self.pack.best
+        info.update(best_info)
+        _str = 'Best\t Test Loss: %.4f\t Test Acc: %.2f' % (info['test_loss'], info['acc@1'])
+        print(_str)
+        self.pack.logger.save_log(_str)
 
     def alpha_to_beta(self):
         for g in self.masks:
